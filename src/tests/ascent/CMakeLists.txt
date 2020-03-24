@@ -119,17 +119,24 @@ if(DRAY_FOUND)
 endif()
 
 
+set(ASCENT_DEPS ascent)
+
+if(PYTHON_FOUND)
+    list(APPEND ASCENT_DEPS python)
+endif()
+
+
 ################################
 # Add main tests
 ################################
 if (ENABLE_SERIAL)
     message(STATUS "Adding ascent lib unit tests")
     foreach(TEST ${BASIC_TESTS})
-        add_cpp_test(TEST ${TEST} DEPENDS_ON ascent)
+        add_cpp_test(TEST ${TEST} DEPENDS_ON ${ASCENT_DEPS})
     endforeach()
 
     foreach(TEST ${VTKH_DEP_TESTS})
-        add_cpp_test(TEST ${TEST} DEPENDS_ON ascent)
+        add_cpp_test(TEST ${TEST} DEPENDS_ON ${ASCENT_DEPS})
     endforeach()
 
     if(VTKM_FOUND)
@@ -143,15 +150,21 @@ endif()
 # Add optional tests
 ################################
 
+set(ASCENT_MPI_DEPS ascent_mpi)
+
+if(PYTHON_FOUND)
+    list(APPEND ASCENT_MPI_DEPS python)
+endif()
+
 if(MPI_FOUND AND ENABLE_MPI)
     message(STATUS "MPI enabled: Adding related unit tests")
     foreach(TEST ${MPI_TESTS})
         # this uses 2 procs
-        add_cpp_mpi_test(TEST ${TEST} NUM_MPI_TASKS 2 DEPENDS_ON ascent_mpi)
+        add_cpp_mpi_test(TEST ${TEST} NUM_MPI_TASKS 2 DEPENDS_ON ${ASCENT_MPI_DEPS})
     endforeach()
 
     # add the hola mpi test which uses 8 ranks
-    add_cpp_mpi_test(TEST t_ascent_hola_mpi NUM_MPI_TASKS 8 DEPENDS_ON ascent_mpi)
+    add_cpp_mpi_test(TEST t_ascent_hola_mpi NUM_MPI_TASKS 8 DEPENDS_ON ${ASCENT_MPI_DEPS})
 
   if(ENABLE_BABELFLOW)
   # add the babelflow pmt mpi test
