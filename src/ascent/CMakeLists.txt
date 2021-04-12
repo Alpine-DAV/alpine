@@ -79,6 +79,7 @@ if(ASCENT_VTKM_ENABLED)
 endif()
 
 set(ASCENT_USE_OPENMP  ${OPENMP_FOUND})
+set(ASCENT_USE_CUDA ${CUDA_FOUND})
 
 configure_file ("${CMAKE_CURRENT_SOURCE_DIR}/ascent_config.h.in"
                 "${CMAKE_CURRENT_BINARY_DIR}/ascent_config.h")
@@ -99,6 +100,11 @@ set(ascent_sources
     runtimes/expressions/ascent_expressions_ast.cpp
     runtimes/expressions/ascent_expressions_tokens.cpp
     runtimes/expressions/ascent_expressions_parser.cpp
+    runtimes/expressions/ascent_memory_manager.cpp
+    runtimes/expressions/ascent_array.cpp
+    runtimes/expressions/ascent_raja_policies.cpp
+    runtimes/expressions/ascent_execution.cpp
+    runtimes/expressions/ascent_array_internals.cpp
     runtimes/ascent_flow_runtime.cpp
     runtimes/flow_filters/ascent_runtime_filters.cpp
     runtimes/flow_filters/ascent_runtime_param_check.cpp
@@ -139,6 +145,13 @@ set(ascent_headers
     runtimes/expressions/ascent_expressions_ast.hpp
     runtimes/expressions/ascent_expressions_tokens.hpp
     runtimes/expressions/ascent_expressions_parser.hpp
+    runtimes/expressions/ascent_math.hpp
+    runtimes/expressions/ascent_array.hpp
+    runtimes/expressions/ascent_array_internals.hpp
+    runtimes/expressions/ascent_memory_interface.hpp
+    runtimes/expressions/ascent_memory_manager.hpp
+    runtimes/expressions/ascent_raja_policies.hpp
+    runtimes/expressions/ascent_execution.hpp
     # flow
     runtimes/ascent_main_runtime.hpp
     runtimes/ascent_flow_runtime.hpp
@@ -165,6 +178,18 @@ set(ascent_headers
     utils/ascent_resources_cinema_web.hpp
     # hola
     hola/ascent_hola.hpp)
+
+if(CUDA_FOUND)
+  set(ascent_cuda_sources runtimes/expressions/ascent_memory_manager.cpp
+                          runtimes/expressions/ascent_conduit_reductions.cpp
+                          runtimes/expressions/ascent_array.cpp
+                          runtimes/expressions/ascent_array_internals.cpp
+                          runtimes/expressions/ascent_raja_policies.cpp
+                          runtimes/expressions/ascent_blueprint_architect.cpp)
+
+  # tell cmake to compiler these files with nvcc
+  set_source_files_properties(${ascent_cuda_sources}  PROPERTIES LANGUAGE CUDA)
+endif()
 
 if(VTKM_FOUND)
 
@@ -251,6 +276,8 @@ endif()
 
 set(ascent_thirdparty_libs
     conduit
+    RAJA
+    umpire
     ascent_flow
     ascent_lodepng)
 
@@ -294,7 +321,6 @@ if (ENABLE_SERIAL)
 
     set_target_properties(ascent PROPERTIES CXX_VISIBILITY_PRESET hidden)
     target_compile_definitions(ascent PRIVATE ASCENT_EXPORTS_FLAG)
-
     if(VTKM_FOUND)
         set(ascent_device_sources ${ascent_vtkh_dep_sources})
         list(APPEND ascent_device_sources runtimes/flow_filters/ascent_runtime_blueprint_filters.cpp)

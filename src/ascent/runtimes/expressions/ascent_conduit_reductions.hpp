@@ -74,21 +74,22 @@ namespace runtime
 namespace expressions
 {
 
-conduit::Node array_max(const conduit::Node &values);
+conduit::Node array_max(const conduit::Node &field, std::string component = "");
 
-conduit::Node array_min(const conduit::Node &values);
+conduit::Node array_min(const conduit::Node &field, std::string component = "");
 
-conduit::Node array_sum(const conduit::Node &values);
+conduit::Node array_sum(const conduit::Node &field, std::string component = "");
 
-conduit::Node array_nan_count(const conduit::Node &values);
+conduit::Node array_nan_count(const conduit::Node &field, std::string component = "");
 
 // count of all inf or -inf
-conduit::Node array_inf_count(const conduit::Node &values);
+conduit::Node array_inf_count(const conduit::Node &field, std::string component = "");
 
-conduit::Node array_histogram(const conduit::Node &values,
+conduit::Node array_histogram(const conduit::Node &field,
                               const double &min_value,
                               const double &max_value,
-                              const int &num_bins);
+                              const int &num_bins,
+                              std::string component = "");
 
 };
 //-----------------------------------------------------------------------------

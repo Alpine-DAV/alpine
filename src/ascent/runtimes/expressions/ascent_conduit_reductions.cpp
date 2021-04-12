@@ -50,6 +50,12 @@
 //-----------------------------------------------------------------------------
 
 #include "ascent_conduit_reductions.hpp"
+#include "ascent_memory_manager.hpp"
+#include "ascent_memory_interface.hpp"
+#include "ascent_array.hpp"
+#include "ascent_raja_policies.hpp"
+#include "ascent_execution.hpp"
+#include "ascent_math.hpp"
 
 #include <ascent_logging.hpp>
 
@@ -57,6 +63,16 @@
 #include <cmath>
 #include <limits>
 
+#pragma diag_suppress 2527
+#pragma diag_suppress 2529
+#pragma diag_suppress 2651
+#pragma diag_suppress 2653
+#pragma diag_suppress 2668
+#pragma diag_suppress 2669
+#pragma diag_suppress 2670
+#pragma diag_suppress 2671
+#pragma diag_suppress 2735
+#pragma diag_suppress 2737
 //-----------------------------------------------------------------------------
 // -- begin ascent:: --
 //-----------------------------------------------------------------------------
@@ -78,180 +94,304 @@ namespace expressions
 namespace detail
 {
 
-template<typename Function>
-conduit::Node
-type_dispatch(const conduit::Node &values, const Function &func)
+bool field_is_float32(const conduit::Node &field)
 {
-  // check for single component scalar
-  int num_children = values.number_of_children();
-  if(num_children > 1)
+  const int children = field["values"].number_of_children();
+  if(children == 0)
   {
-    ASCENT_ERROR("Internal error: expected scalar array.");
+    return field["values"].dtype().is_float32();
   }
-  const conduit::Node &vals = num_children == 0 ? values : values.child(0);
+  else
+  {
+    // there has to be one or more children so ask the first
+    return field["values"].child(0).dtype().is_float32();
+  }
+}
+
+bool field_is_float64(const conduit::Node &field)
+{
+  const int children = field["values"].number_of_children();
+  if(children == 0)
+  {
+    return field["values"].dtype().is_float64();
+  }
+  else
+  {
+    // there has to be one or more children so ask the first
+    return field["values"].child(0).dtype().is_float64();
+  }
+}
+
+bool field_is_int32(const conduit::Node &field)
+{
+  const int children = field["values"].number_of_children();
+  if(children == 0)
+  {
+    return field["values"].dtype().is_int32();
+  }
+  else
+  {
+    // there has to be one or more children so ask the first
+    return field["values"].child(0).dtype().is_int32();
+  }
+}
+
+bool field_is_int64(const conduit::Node &field)
+{
+  const int children = field["values"].number_of_children();
+  if(children == 0)
+  {
+    return field["values"].dtype().is_int64();
+  }
+  else
+  {
+    // there has to be one or more children so ask the first
+    return field["values"].child(0).dtype().is_int64();
+  }
+}
+
+template<typename Function, typename Exec>
+conduit::Node dispatch_memory(const conduit::Node &field,
+                              std::string component,
+                              const Function &func,
+                              const Exec &exec)
+{
+  const std::string mem_space = Exec::memory_space;
+
   conduit::Node res;
-  const int num_vals = vals.dtype().number_of_elements();
-  if(vals.dtype().is_float32())
+  if(field_is_float32(field))
   {
-    const conduit::float32 *ptr =  vals.as_float32_ptr();
-    res = func(ptr, num_vals);
+    MemoryInterface<conduit::float32> farray(field);
+    MemoryAccessor<conduit::float32> accessor = farray.accessor(mem_space,component);
+    res = func(accessor, exec);
   }
-  else if(vals.dtype().is_float64())
+  else if(field_is_float64(field))
   {
-    const conduit::float64 *ptr =  vals.as_float64_ptr();
-    res = func(ptr, num_vals);
+    MemoryInterface<conduit::float64> farray(field);
+    MemoryAccessor<conduit::float64> accessor = farray.accessor(mem_space,component);
+    res = func(accessor, exec);
   }
-  else if(vals.dtype().is_int32())
+  else if(field_is_int32(field))
   {
-    const conduit::int32 *ptr =  vals.as_int32_ptr();
-    res = func(ptr, num_vals);
+    MemoryInterface<conduit::int32> farray(field);
+    MemoryAccessor<conduit::int32> accessor = farray.accessor(mem_space,component);
+    res = func(accessor, exec);
   }
-  else if(vals.dtype().is_int64())
+  else if(field_is_int64(field))
   {
-    const conduit::int64 *ptr =  vals.as_int64_ptr();
-    res = func(ptr, num_vals);
+    MemoryInterface<conduit::int64> farray(field);
+    MemoryAccessor<conduit::int64> accessor = farray.accessor(mem_space,component);
+    res = func(accessor, exec);
   }
   else
   {
     ASCENT_ERROR("Type dispatch: unsupported array type "<<
-                  values.schema().to_string());
+                  field.schema().to_string());
   }
   return res;
 }
 
-struct MaxCompare
+template<typename Function>
+conduit::Node
+exec_dispatch(const conduit::Node &field, std::string component, const Function &func)
 {
-  double value;
-  int index;
-};
 
-#ifdef ASCENT_USE_OPENMP
-    #pragma omp declare reduction(maximum: struct MaxCompare : \
-        omp_out = omp_in.value > omp_out.value ? omp_in : omp_out)
+  conduit::Node res;
+  const std::string exec_policy = ExecutionManager::execution();
+  std::cout<<"Exec policy "<<exec_policy<<"\n";
+  if(exec_policy == "serial")
+  {
+    SerialExec exec;
+    res = dispatch_memory(field, component, func, exec);
+  }
+#if defined(ASCENT_USE_OPENMP)
+  else if(exec_policy == "openmp")
+  {
+    OpenMPExec exec;
+    res = dispatch_memory(field, component, func, exec);
+  }
 #endif
+#ifdef ASCENT_USE_CUDA
+  else if(exec_policy == "cuda")
+  {
+    CudaExec exec;
+    res = dispatch_memory(field, component, func, exec);
+  }
+#endif
+  else
+  {
+    ASCENT_ERROR("Execution dispatch: unsupported execution policy "<<
+                  exec_policy);
+  }
+  return res;
+}
+
+template<typename Function>
+conduit::Node
+field_dispatch(const conduit::Node &field, const Function &func)
+{
+  // check for single component scalar
+  int num_children = field["values"].number_of_children();
+  if(num_children > 1)
+  {
+    ASCENT_ERROR("Field Dispatch internal error: expected scalar array.");
+  }
+  conduit::Node res;
+
+  if(field_is_float32(field))
+  {
+    MemoryInterface<conduit::float32> farray(field);
+    res = func(farray.ptr_const(), farray.size(0));
+  }
+  else if(field_is_float64(field))
+  {
+    MemoryInterface<conduit::float64> farray(field);
+    res = func(farray.ptr_const(), farray.size(0));
+  }
+  else if(field_is_int32(field))
+  {
+    MemoryInterface<conduit::int32> farray(field);
+    res = func(farray.ptr_const(), farray.size(0));
+  }
+  else if(field_is_int64(field))
+  {
+    MemoryInterface<conduit::int64> farray(field);
+    res = func(farray.ptr_const(), farray.size(0));
+  }
+  else
+  {
+    ASCENT_ERROR("Type dispatch: unsupported array type "<<
+                  field.schema().to_string());
+  }
+  return res;
+}
+
+struct IndexLoc
+{
+  RAJA::Index_type idx;
+  constexpr IndexLoc() : idx(-1) {}
+  constexpr __host__ __device__ IndexLoc(RAJA::Index_type idx) : idx(idx) {}
+};
 
 struct MaxFunctor
 {
-  template<typename T>
-  conduit::Node operator()(const T* values, const int &size) const
+  template<typename T, typename Exec>
+  conduit::Node operator()(const MemoryAccessor<T> accessor,
+                           const Exec &) const
   {
-    MaxCompare mcomp;
+    T identity = std::numeric_limits<T>::lowest();
+    const int size = accessor.m_size;
 
-    mcomp.value = std::numeric_limits<double>::lowest();
-    mcomp.index = 0;
-#ifdef ASCENT_USE_OPENMP
-    #pragma omp parallel for reduction(maximum:mcomp)
-#endif
-    for(int v = 0; v < size; ++v)
+    using fp = typename Exec::for_policy;
+    using rp = typename Exec::reduce_policy;
+
+    RAJA::ReduceMaxLoc<rp, T, IndexLoc> reducer(identity, IndexLoc());
+
+    RAJA::forall<fp> (RAJA::RangeSegment (0, size), [=] ASCENT_LAMBDA (RAJA::Index_type i)
     {
-      double val = static_cast<double>(values[v]);
-      if(val > mcomp.value)
-      {
-        mcomp.value = val;
-        mcomp.index = v;
-      }
-    }
+      const T val = accessor[i];
+      reducer.maxloc(val,i);
+    });
+    ASCENT_ERROR_CHECK();
 
     conduit::Node res;
-    res["value"] = mcomp.value;
-    res["index"] = mcomp.index;
+    res["value"] = reducer.get();
+    res["index"] = reducer.getLoc().idx;
     return res;
   }
 };
 
-struct MinCompare
-{
-  double value;
-  int index;
-};
-
-#ifdef ASCENT_USE_OPENMP
-    #pragma omp declare reduction(minimum: struct MinCompare : \
-        omp_out = omp_in.value < omp_out.value ? omp_in : omp_out)
-#endif
-
 struct MinFunctor
 {
-  template<typename T>
-  conduit::Node operator()(const T* values, const int &size) const
+  template<typename T, typename Exec>
+  conduit::Node operator()(const MemoryAccessor<T> accessor,
+                           const Exec &) const
   {
-    MinCompare mcomp;
+    T identity = std::numeric_limits<T>::max();
+    const int size = accessor.m_size;
 
-    mcomp.value = std::numeric_limits<double>::max();
-    mcomp.index = 0;
-#ifdef ASCENT_USE_OPENMP
-    #pragma omp parallel for reduction(minimum:mcomp)
-#endif
-    for(int v = 0; v < size; ++v)
-    {
-      double val = static_cast<double>(values[v]);
-      if(val < mcomp.value)
-      {
-        mcomp.value = val;
-        mcomp.index = v;
-      }
-    }
+    using fp = typename Exec::for_policy;
+    using rp = typename Exec::reduce_policy;
+
+    RAJA::ReduceMinLoc<rp, T, IndexLoc> reducer(identity, IndexLoc());
+
+    RAJA::forall<fp> (RAJA::RangeSegment (0, size), [=] ASCENT_LAMBDA (RAJA::Index_type i) {
+
+      const T val = accessor[i];
+      reducer.minloc(val,i);
+    });
+    ASCENT_ERROR_CHECK();
 
     conduit::Node res;
-    res["value"] = mcomp.value;
-    res["index"] = mcomp.index;
+    res["value"] = reducer.get();
+    res["index"] = reducer.getLoc().idx;
     return res;
   }
 };
 
 struct SumFunctor
 {
-  template<typename T>
-  conduit::Node operator()(const T* values, const int &size) const
+  template<typename T, typename Exec>
+  conduit::Node operator()(const MemoryAccessor<T> accessor,
+                           const Exec &) const
   {
-    T sum = 0;
-#ifdef ASCENT_USE_OPENMP
-    #pragma omp parallel for reduction(+:sum)
-#endif
-    for(int v = 0; v < size; ++v)
+    const int size = accessor.m_size;
+    using fp = typename Exec::for_policy;
+    using rp = typename Exec::reduce_policy;
+
+    RAJA::ReduceSum<rp, T> sum(static_cast<T>(0));
+    RAJA::forall<fp> (RAJA::RangeSegment (0, size), [=] ASCENT_LAMBDA (RAJA::Index_type i)
     {
-      double val = static_cast<double>(values[v]);
+      const T val = accessor[i];
       sum += val;
-    }
+    });
+    ASCENT_ERROR_CHECK();
+
     conduit::Node res;
-    res["value"] = sum;
-    res["count"] = (int)size;
+    res["value"] = sum.get();
+    res["count"] = size;
     return res;
   }
 };
 
 struct NanFunctor
 {
-  template<typename T>
-  conduit::Node operator()(const T* values, const int &size) const
+  template<typename T, typename Exec>
+  conduit::Node operator()(const MemoryAccessor<T> accessor,
+                           const Exec &) const
   {
-    T sum = 0;
-#ifdef ASCENT_USE_OPENMP
-    #pragma omp parallel for reduction(+:sum)
-#endif
-    for(int v = 0; v < size; ++v)
-    {
-      T is_nan = T(0);
-      const T value = values[v];
+    const int size = accessor.m_size;
+    using fp = typename Exec::for_policy;
+    using rp = typename Exec::reduce_policy;
+
+    RAJA::ReduceSum<rp, RAJA::Index_type> count(0);
+    RAJA::forall<fp> (RAJA::RangeSegment (0, size), [=] ASCENT_LAMBDA (RAJA::Index_type i) {
+
+      const T value = accessor[i];
+      RAJA::Index_type is_nan = 0;
       if(value != value)
       {
-        is_nan = T(1);
+        is_nan = 1;
       }
-      sum += is_nan;
-    }
+      count += is_nan;
+    });
+    ASCENT_ERROR_CHECK();
 
     conduit::Node res;
-    res["value"] = sum;
-    res["count"] = (int)size;
+    res["value"] = count.get();
+    res["count"] = size;
     return res;
   }
+
 };
 
 struct InfFunctor
 {
-  template<typename T>
-  conduit::Node operator()(const T* values, const int &size) const
+  // default template for non floating point types
+  template<typename T, typename Exec>
+  conduit::Node operator()(const MemoryAccessor<T> accessor, Exec &) const
   {
+    const int size = accessor.m_size;
     T sum = 0;
     conduit::Node res;
     res["value"] = sum;
@@ -259,38 +399,43 @@ struct InfFunctor
     return res;
   }
 
-  conduit::Node operator()(const float* values, const int &size) const
+  template<typename T, typename Exec>
+  conduit::Node impl(const MemoryAccessor<T> accessor, Exec &) const
   {
-    double sum = 0;
-#ifdef ASCENT_USE_OPENMP
-    #pragma omp parallel for reduction(+:sum)
-#endif
-    for(int v = 0; v < size; ++v)
-    {
-      sum += std::isinf(values[v]) ? 1. : 0.;
-    }
+    using fp = typename Exec::for_policy;
+    using rp = typename Exec::reduce_policy;
+    const int size = accessor.m_size;
+
+    RAJA::ReduceSum<rp, RAJA::Index_type> count(0);
+
+    RAJA::forall<fp> (RAJA::RangeSegment (0, size), [=] ASCENT_LAMBDA (RAJA::Index_type i) {
+
+      const T value = accessor[i];
+      RAJA::Index_type is = 0;
+      if(is_inf(value))
+      {
+        is = 1;
+      }
+      count += is;
+    });
+    ASCENT_ERROR_CHECK();
 
     conduit::Node res;
-    res["value"] = sum;
-    res["count"] = (int)size;
+    res["value"] = count.get();
+    res["count"] = size;
     return res;
   }
 
-  conduit::Node operator()(const double* values, const int &size) const
+  template<typename Exec>
+  conduit::Node operator()(const MemoryAccessor<float> accessor, Exec &exec) const
   {
-    double sum = 0;
-#ifdef ASCENT_USE_OPENMP
-    #pragma omp parallel for reduction(+:sum)
-#endif
-    for(int v = 0; v < size; ++v)
-    {
-      sum += std::isinf(values[v]) ? 1. : 0.;
-    }
+    return impl(accessor, exec);
+  }
 
-    conduit::Node res;
-    res["value"] = sum;
-    res["count"] = (int)size;
-    return res;
+  template<typename Exec>
+  conduit::Node operator()(const MemoryAccessor<double> accessor, Exec &exec) const
+  {
+    return impl(accessor, exec);
   }
 };
 
@@ -307,34 +452,44 @@ struct HistogramFunctor
       m_num_bins(num_bins)
   {}
 
-  template<typename T>
-  conduit::Node operator()(const T* values, const int &size) const
+  template<typename T, typename Exec>
+  conduit::Node operator()(const MemoryAccessor<T> accessor,
+                           const Exec &) const
   {
+    const int size = accessor.m_size;
     const double inv_delta = double(m_num_bins) / (m_max_val - m_min_val);
+    // need to avoid capturing 'this'
+    const int num_bins = m_num_bins;
+    const double min_val = m_min_val;
 
-    double *bins = new double[m_num_bins];
-    memset(bins, 0, sizeof(double) * m_num_bins);
-#ifdef ASCENT_USE_OPENMP
-    #pragma omp parallel for
-#endif
-    for(int v = 0; v < size; ++v)
+    // conduit zero initializes this array
+    conduit::Node res;
+    res["value"].set(conduit::DataType::float64(num_bins));
+    double *nb = res["value"].value();
+
+    Array<double> bins(nb, num_bins);
+
+    double *bins_ptr = bins.ptr(Exec::memory_space);
+
+    using fp = typename Exec::for_policy;
+    using ap = typename Exec::atomic_policy;
+
+    RAJA::forall<fp> (RAJA::RangeSegment (0, size), [=] ASCENT_LAMBDA (RAJA::Index_type i)
     {
-      double val = static_cast<double>(values[v]);
-      int bin_index = static_cast<int>((val - m_min_val) * inv_delta);
+      double val = static_cast<double>(accessor[i]);
+      int bin_index = static_cast<int>((val - min_val) * inv_delta);
       // clamp for now
       // another option is not to count data outside the range
-      bin_index = std::max(0, std::min(bin_index, m_num_bins - 1));
-#ifdef ASCENT_USE_OPENMP
-      #pragma omp atomic
-#endif
-      bins[bin_index]++;
+      bin_index = max(0, min(bin_index, num_bins - 1));
+      int old = RAJA::atomicAdd<ap> (&(bins_ptr[bin_index]), 1.);
 
-    }
-    conduit::Node res;
-    res["value"].set(bins, m_num_bins);
+    });
+    ASCENT_ERROR_CHECK();
+
+    // synch the values back to the host
+    (void)  bins.host_ptr();
     res["bin_size"] = (m_max_val - m_min_val) / double(m_num_bins);
 
-    delete[] bins;
     return res;
   }
 };
@@ -345,43 +500,44 @@ struct HistogramFunctor
 //-----------------------------------------------------------------------------
 
 conduit::Node
-array_max(const conduit::Node &values)
+array_max(const conduit::Node &field, std::string component)
 {
-  return detail::type_dispatch(values, detail::MaxFunctor());
+  return detail::exec_dispatch(field, component, detail::MaxFunctor());
 }
 
 conduit::Node
-array_min(const conduit::Node &values)
+array_min(const conduit::Node &field, const std::string component)
 {
-  return detail::type_dispatch(values, detail::MinFunctor());
+  return detail::exec_dispatch(field, component, detail::MinFunctor());
 }
 
 conduit::Node
-array_sum(const conduit::Node &values)
+array_sum(const conduit::Node &field, const std::string component)
 {
-  return detail::type_dispatch(values, detail::SumFunctor());
+  return detail::exec_dispatch(field, component, detail::SumFunctor());
 }
 
 conduit::Node
-array_nan_count(const conduit::Node &values)
+array_nan_count(const conduit::Node &field, std::string component)
 {
-  return detail::type_dispatch(values, detail::NanFunctor());
+  return detail::exec_dispatch(field, component, detail::NanFunctor());
 }
 
 conduit::Node
-array_inf_count(const conduit::Node &values)
+array_inf_count(const conduit::Node &field, std::string component)
 {
-  return detail::type_dispatch(values, detail::InfFunctor());
+  return detail::exec_dispatch(field, component, detail::InfFunctor());
 }
 
 conduit::Node
-array_histogram(const conduit::Node &values,
+array_histogram(const conduit::Node &field,
                 const double &min_value,
                 const double &max_value,
-                const int &num_bins)
+                const int &num_bins,
+                std::string component)
 {
   detail::HistogramFunctor histogram(min_value, max_value, num_bins);
-  return detail::type_dispatch(values, histogram);
+  return detail::exec_dispatch(field, component, histogram);
 }
 
 //-----------------------------------------------------------------------------
@@ -403,8 +559,3 @@ array_histogram(const conduit::Node &values,
 //-----------------------------------------------------------------------------
 // -- end ascent:: --
 //-----------------------------------------------------------------------------
-
-
-
-
-

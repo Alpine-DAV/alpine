@@ -49,6 +49,7 @@
 //-----------------------------------------------------------------------------
 
 #include "ascent_blueprint_architect.hpp"
+#include "ascent_memory_interface.hpp"
 #include "ascent_conduit_reductions.hpp"
 
 #include <ascent_logging.hpp>
@@ -227,12 +228,14 @@ get_element_indices(const conduit::Node &n_topo,
 
     indices.resize(num_indices);
     // look up the connectivity
+    // this is an array that could be on the GPU, so we have to
+    // use special care
     const conduit::Node &n_topo_conn = n_topo_eles["connectivity"];
-    const conduit::int32_array conn_a = n_topo_conn.value();
+    MemoryInterface<int> conn(n_topo_eles, "connectivity");
     const int offset = index * num_indices;
     for(int i = 0; i < num_indices; ++i)
     {
-      indices[i] = conn_a[offset + i];
+      indices[i] = conn.value(offset + i,0);
     }
   }
   else
@@ -319,26 +322,22 @@ get_explicit_vert(const conduit::Node &n_coords, const int &index)
   double vert[3] = {0., 0., 0.};
   if(is_float64)
   {
-    conduit::float64_array x_a = n_coords["values/x"].value();
-    conduit::float64_array y_a = n_coords["values/y"].value();
-    vert[0] = x_a[index];
-    vert[1] = y_a[index];
-    if(n_coords.has_path("values/z"))
+    MemoryInterface<double> array(n_coords);
+    vert[0] = array.value(index,"x");
+    vert[1] = array.value(index,"y");
+    if(array.components() == 3)
     {
-      conduit::float64_array z_a = n_coords["values/z"].value();
-      vert[2] = z_a[index];
+      vert[2] = array.value(index,"z");
     }
   }
   else
   {
-    conduit::float32_array x_a = n_coords["values/x"].value();
-    conduit::float32_array y_a = n_coords["values/y"].value();
-    vert[0] = x_a[index];
-    vert[1] = y_a[index];
-    if(n_coords.has_path("values/z"))
+    MemoryInterface<float> array(n_coords);
+    vert[0] = array.value(index,"x");
+    vert[1] = array.value(index,"y");
+    if(array.components() == 3)
     {
-      conduit::float32_array z_a = n_coords["values/z"].value();
-      vert[2] = z_a[index];
+      vert[2] = array.value(index,"z");
     }
   }
 
@@ -380,26 +379,22 @@ get_rectilinear_vert(const conduit::Node &n_coords, const int &index)
 
   if(is_float64)
   {
-    conduit::float64_array x_a = n_coords["values/x"].value();
-    conduit::float64_array y_a = n_coords["values/y"].value();
-    vert[0] = x_a[logical_index[0]];
-    vert[1] = y_a[logical_index[1]];
+    MemoryInterface<double> f_coords(n_coords);
+    vert[0] = f_coords.value(logical_index[0],"x");
+    vert[1] = f_coords.value(logical_index[1],"y");
     if(dims[2] != 0)
     {
-      conduit::float64_array z_a = n_coords["values/z"].value();
-      vert[2] = z_a[logical_index[2]];
+      vert[2] = f_coords.value(logical_index[2],"z");
     }
   }
   else
   {
-    conduit::float32_array x_a = n_coords["values/x"].value();
-    conduit::float32_array y_a = n_coords["values/y"].value();
-    vert[0] = x_a[logical_index[0]];
-    vert[1] = y_a[logical_index[1]];
+    MemoryInterface<float> f_coords(n_coords);
+    vert[0] = f_coords.value(logical_index[0],"x");
+    vert[1] = f_coords.value(logical_index[1],"y");
     if(dims[2] != 0)
     {
-      conduit::float32_array z_a = n_coords["values/z"].value();
-      vert[2] = z_a[logical_index[2]];
+      vert[2] = f_coords.value(logical_index[2],"z");
     }
   }
 
@@ -848,7 +843,7 @@ field_histogram(const conduit::Node &dataset,
     const conduit::Node &dom = dataset.child(i);
     if(dom.has_path("fields/" + field))
     {
-      const std::string path = "fields/" + field + "/values";
+      const std::string path = "fields/" + field;
       conduit::Node res;
       res = array_histogram(dom[path], min_val, max_val, num_bins);
 
@@ -1040,8 +1035,8 @@ global_topo_and_assoc(const conduit::Node &dataset,
                        + "'. Binning only supports vertex and element association.";
   }
 
-  int error_int = error ? 1 : 0;
 #ifdef ASCENT_MPI_ENABLED
+  int error_int = error ? 1 : 0;
   int global_error;
   MPI_Allreduce(&error_int, &global_error, 1, MPI_INT, MPI_MAX, mpi_comm);
   conduit::Node global_msg;
@@ -1884,7 +1879,7 @@ field_entropy(const conduit::Node &hist)
 {
   const double *hist_bins = hist["attrs/value/value"].value();
   const int num_bins = hist["attrs/num_bins/value"].to_int32();
-  double sum = array_sum(hist["attrs/value/value"])["value"].to_float64();
+  double sum = array_sum(hist["attrs/value"])["value"].to_float64();
   double entropy = 0;
 
 #ifdef ASCENT_USE_OPENMP
@@ -1912,7 +1907,7 @@ field_pdf(const conduit::Node &hist)
   double min_val = hist["attrs/min_val/value"].to_float64();
   double max_val = hist["attrs/max_val/value"].to_float64();
 
-  double sum = array_sum(hist["attrs/value/value"])["value"].to_float64();
+  double sum = array_sum(hist["attrs/value"])["value"].to_float64();
 
   double *pdf = new double[num_bins]();
 
@@ -1941,7 +1936,7 @@ field_cdf(const conduit::Node &hist)
   double min_val = hist["attrs/min_val/value"].to_float64();
   double max_val = hist["attrs/max_val/value"].to_float64();
 
-  double sum = array_sum(hist["attrs/value/value"])["value"].to_float64();
+  double sum = array_sum(hist["attrs/value"])["value"].to_float64();
 
   double rolling_cdf = 0;
 
@@ -2029,7 +2024,7 @@ field_nan_count(const conduit::Node &dataset, const std::string &field)
     const conduit::Node &dom = dataset.child(i);
     if(dom.has_path("fields/" + field))
     {
-      const std::string path = "fields/" + field + "/values";
+      const std::string path = "fields/" + field;
       conduit::Node res;
       res = array_nan_count(dom[path]);
       nan_count += res["value"].to_float64();
@@ -2051,7 +2046,7 @@ field_inf_count(const conduit::Node &dataset, const std::string &field)
     const conduit::Node &dom = dataset.child(i);
     if(dom.has_path("fields/" + field))
     {
-      const std::string path = "fields/" + field + "/values";
+      const std::string path = "fields/" + field;
       conduit::Node res;
       res = array_inf_count(dom[path]);
       inf_count += res["value"].to_float64();
@@ -2077,14 +2072,14 @@ field_min(const conduit::Node &dataset, const std::string &field)
     const conduit::Node &dom = dataset.child(i);
     if(dom.has_path("fields/" + field))
     {
-      const std::string path = "fields/" + field + "/values";
+      const std::string path = "fields/" + field;
       conduit::Node res;
       res = array_min(dom[path]);
       double a_min = res["value"].to_float64();
       if(a_min < min_value)
       {
         min_value = a_min;
-        index = res["index"].as_int32();
+        index = res["index"].to_int32();
         domain = i;
         domain_id = dom["state/domain_id"].to_int32();
       }
@@ -2170,7 +2165,7 @@ field_sum(const conduit::Node &dataset, const std::string &field)
     const conduit::Node &dom = dataset.child(i);
     if(dom.has_path("fields/" + field))
     {
-      const std::string path = "fields/" + field + "/values";
+      const std::string path = "fields/" + field;
       conduit::Node res;
       res = array_sum(dom[path]);
 
@@ -2228,14 +2223,15 @@ field_max(const conduit::Node &dataset, const std::string &field)
     const conduit::Node &dom = dataset.child(i);
     if(dom.has_path("fields/" + field))
     {
-      const std::string path = "fields/" + field + "/values";
+      //const std::string path = "fields/" + field + "/values";
+      const std::string path = "fields/" + field;
       conduit::Node res;
       res = array_max(dom[path]);
       double a_max = res["value"].to_float64();
       if(a_max > max_value)
       {
         max_value = a_max;
-        index = res["index"].as_int32();
+        index = res["index"].to_int32();
         domain = i;
         domain_id = dom["state/domain_id"].to_int32();
       }
