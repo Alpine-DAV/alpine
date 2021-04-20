@@ -337,6 +337,7 @@ vtkh::Render parse_render(const conduit::Node &render_node,
   {
     vtkm::rendering::Camera camera = render.GetCamera();
     parse_camera(render_node["camera"], camera);
+    camera.Print();
     render.SetCamera(camera);
   }
   if(render_node.has_path("shading"))
@@ -1050,6 +1051,38 @@ DefaultRender::execute()
         image_name = output_dir(image_name, graph());
       }
 
+      //check for camera in registery
+      //
+      vtkh::Render render;
+      if(graph().workspace().registry().has_entry("camera"))
+      {
+        vtkm::rendering::Camera *camera = graph().workspace().registry().fetch<vtkm::rendering::Camera>("camera");
+
+        /*render = vtkh::MakeRender(1024,
+                                  1024,
+                                  *camera,
+                                  data,
+                                  image_name);
+        */
+	render = vtkh::MakeRender(1024,
+                                  1024,
+                                  *bounds,
+				  *camera,
+                                  image_name);
+      }
+      else
+      {  
+      /*  
+        render = vtkh::MakeRender(1024,
+                                  1024,
+                                  *bounds,
+                                  v_domain_ids,
+                                  image_name);*/
+        render = vtkh::MakeRender(1024,
+                                  1024,
+                                  *bounds,
+                                  image_name);
+
       vtkm::Bounds scene_bounds = *bounds;
       if(params().has_path("use_original_bounds"))
       {
@@ -1064,6 +1097,7 @@ DefaultRender::execute()
                                              scene_bounds,
                                              image_name);
 
+      }
       renders->push_back(render);
     }
     set_output<std::vector<vtkh::Render>>(renders);

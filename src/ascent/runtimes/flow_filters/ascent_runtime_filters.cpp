@@ -64,6 +64,8 @@
 #include <ascent_runtime_query_filters.hpp>
 
 #if defined(ASCENT_VTKM_ENABLED)
+    #include <ascent_runtime_camera_filters.hpp>
+    #include <ascent_runtime_simplex_filters.hpp>
     #include <ascent_runtime_vtkh_filters.hpp>
     #include <ascent_runtime_rendering_filters.hpp>
     #include <ascent_runtime_rover_filters.hpp>
@@ -123,12 +125,15 @@ register_builtin()
     AscentRuntime::register_filter_type<BasicTrigger>();
     AscentRuntime::register_filter_type<BasicQuery>();
 
+
 #if defined(ASCENT_VTKM_ENABLED)
     AscentRuntime::register_filter_type<DefaultRender>();
 
+    //Magic Camera
+    AscentRuntime::register_filter_type<AutoCamera>("transforms","camera");
+    AscentRuntime::register_filter_type<CameraSimplex>("transforms","simplex");
     AscentRuntime::register_filter_type<VTKHBounds>();
     AscentRuntime::register_filter_type<VTKHUnionBounds>();
-
     // transforms, the current crop expect vtk-h input data
     AscentRuntime::register_filter_type<VTKHClip>("transforms","clip");
     AscentRuntime::register_filter_type<VTKHClipWithField>("transforms","clip_with_field");
