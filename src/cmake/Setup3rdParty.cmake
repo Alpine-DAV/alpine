@@ -116,6 +116,26 @@ if (DRAY_DIR)
 endif()
 
 ################################
+# Setup OCCA
+################################
+if (OCCA_DIR)
+message(STATUS "OCCA")
+  include(cmake/thirdparty/SetupOcca.cmake)
+else()
+message(STATUS "NOOOOOOOOOOOOOOOOOOOOOOOO OCCA")
+endif()
+
+################################
+# Setup Umpire
+################################
+if (UMPIRE_DIR)
+message(STATUS "Umpire")
+  include(cmake/thirdparty/SetupUmpire.cmake)
+else()
+message(STATUS "NOOOOOOOOOOOOOOOOOOOOOOOO UMPIRE")
+endif()
+
+################################
 # Setup Fides
 ################################
 if (FIDES_DIR AND VTKM_DIR)

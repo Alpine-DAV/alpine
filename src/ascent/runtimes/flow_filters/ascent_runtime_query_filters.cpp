@@ -171,6 +171,79 @@ BasicQuery::execute()
 }
 
 //-----------------------------------------------------------------------------
+FilterQuery::FilterQuery()
+:Filter()
+{
+// empty
+}
+
+//-----------------------------------------------------------------------------
+FilterQuery::~FilterQuery()
+{
+// empty
+}
+
+//-----------------------------------------------------------------------------
+void
+FilterQuery::declare_interface(Node &i)
+{
+    i["type_name"]   = "expression";
+    i["port_names"].append() = "in";
+    i["output_port"] = "true";
+}
+
+//-----------------------------------------------------------------------------
+bool
+FilterQuery::verify_params(const conduit::Node &params,
+                            conduit::Node &info)
+{
+    info.reset();
+    bool res = check_string("expression",params, info, true);
+    res &= check_string("name",params, info, true);
+
+    std::vector<std::string> valid_paths;
+    valid_paths.push_back("expression");
+    valid_paths.push_back("name");
+
+    return res;
+}
+
+
+//-----------------------------------------------------------------------------
+void
+FilterQuery::execute()
+{
+    if(!input(0).check_type<DataObject>())
+    {
+        ASCENT_ERROR("Query input must be a data object");
+    }
+
+    DataObject *data_object = input<DataObject>(0);
+    std::shared_ptr<Node> n_input = data_object->as_low_order_bp();
+
+    std::string expression = params()["expression"].as_string();
+    std::string name = params()["name"].as_string();
+    conduit::Node actions;
+
+    Node v_info;
+
+    // The mere act of a query stores the results
+    runtime::expressions::ExpressionEval eval(n_input.get());
+    conduit::Node res = eval.evaluate(expression, name);
+
+    // Since queries might add new fields, the blueprint needs to become the source
+    if(data_object->source() != DataObject::Source::LOW_BP)
+    {
+      // TODO for now always copy the bp...
+      conduit::Node *new_data_object = new conduit::Node(*n_input);
+      data_object->reset(new_data_object);
+    }
+
+    set_output<DataObject>(data_object);
+}
+
+
+//-----------------------------------------------------------------------------
 };
 //-----------------------------------------------------------------------------
 // -- end ascent::runtime::filters --
